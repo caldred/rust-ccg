@@ -48,6 +48,9 @@ pub mod nn;
 pub mod training;
 pub mod games;
 
+#[cfg(feature = "python")]
+pub mod python;
+
 // Re-export commonly used types
 pub use crate::core::{
     EntityId, PlayerId, PlayerMap,
