@@ -439,6 +439,44 @@ impl<E: RulesEngine + Clone> MCTSSearch<E> {
     pub fn config(&self) -> &MCTSConfig {
         &self.config
     }
+
+    /// Set prior probabilities on root edges from a neural network policy.
+    ///
+    /// This allows neural network guidance for MCTS exploration.
+    /// Priors should be set after calling `search()` has initialized the tree,
+    /// or the root can be manually expanded first.
+    ///
+    /// # Arguments
+    /// - `priors`: Slice of (action, prior_probability) pairs
+    ///
+    /// # Returns
+    /// Number of edges that were updated
+    pub fn set_root_priors(&mut self, priors: &[(Action, f32)]) -> usize {
+        let root = self.tree.root();
+        let node = self.tree.get_mut(root);
+        let mut updated = 0;
+
+        for edge in node.edges.iter_mut() {
+            if let Some((_, prior)) = priors.iter().find(|(a, _)| a == &edge.action) {
+                edge.prior = *prior;
+                updated += 1;
+            }
+        }
+
+        updated
+    }
+
+    /// Get the current root priors.
+    ///
+    /// Returns (action, prior) pairs for all root edges.
+    pub fn root_priors(&self) -> Vec<(Action, f32)> {
+        self.tree
+            .root_node()
+            .edges
+            .iter()
+            .map(|e| (e.action.clone(), e.prior))
+            .collect()
+    }
 }
 
 #[cfg(test)]
@@ -587,5 +625,481 @@ mod tests {
         let tree_stats = search.tree().stats();
         assert!(tree_stats.node_count > 1);
         assert!(tree_stats.max_depth > 0);
+    }
+
+    #[test]
+    fn test_set_root_priors() {
+        let engine = TestEngine::new(2).terminal_after(10);
+        let mut state = GameState::new(2, 42);
+        let config = MCTSConfig::default();
+
+        let mut search = MCTSSearch::new(engine, config);
+        search.search(&mut state, PlayerId::new(0), 10);
+
+        // Get actions from root
+        let actions: Vec<_> = search.action_visits().into_iter().map(|(a, _)| a).collect();
+
+        // Set custom priors
+        let priors: Vec<_> = actions
+            .iter()
+            .enumerate()
+            .map(|(i, a)| (a.clone(), (i + 1) as f32 * 0.1))
+            .collect();
+
+        let updated = search.set_root_priors(&priors);
+        assert_eq!(updated, actions.len());
+
+        // Verify priors were set
+        let root_priors = search.root_priors();
+        for (action, prior) in &root_priors {
+            let expected = priors.iter().find(|(a, _)| a == action).map(|(_, p)| *p);
+            assert_eq!(Some(*prior), expected);
+        }
+    }
+
+    #[test]
+    fn test_set_root_priors_partial_match() {
+        let engine = TestEngine::new(2).terminal_after(10);
+        let mut state = GameState::new(2, 42);
+        let config = MCTSConfig::default();
+
+        let mut search = MCTSSearch::new(engine, config);
+        search.search(&mut state, PlayerId::new(0), 10);
+
+        // Only set prior for one action
+        let action = Action::new(TemplateId::new(0));
+        let priors = vec![(action, 0.9)];
+
+        let updated = search.set_root_priors(&priors);
+        assert_eq!(updated, 1);
+    }
+
+    #[test]
+    fn test_set_root_priors_no_match() {
+        let engine = TestEngine::new(2).terminal_after(10);
+        let mut state = GameState::new(2, 42);
+        let config = MCTSConfig::default();
+
+        let mut search = MCTSSearch::new(engine, config);
+        search.search(&mut state, PlayerId::new(0), 10);
+
+        // Set prior for non-existent action
+        let action = Action::new(TemplateId::new(999));
+        let priors = vec![(action, 0.9)];
+
+        let updated = search.set_root_priors(&priors);
+        assert_eq!(updated, 0);
+    }
+
+    #[test]
+    fn test_root_priors_default() {
+        let engine = TestEngine::new(2).terminal_after(10);
+        let mut state = GameState::new(2, 42);
+        let config = MCTSConfig::default();
+
+        let mut search = MCTSSearch::new(engine, config);
+        search.search(&mut state, PlayerId::new(0), 10);
+
+        // Default priors should all be 1.0
+        let priors = search.root_priors();
+        assert!(!priors.is_empty());
+        for (_, prior) in &priors {
+            assert_eq!(*prior, 1.0);
+        }
+    }
+
+    #[test]
+    fn test_root_priors_empty_tree() {
+        let engine = TestEngine::new(2).terminal_after(0); // Terminal immediately
+        let mut state = GameState::new(2, 42);
+        let config = MCTSConfig::default();
+
+        let mut search = MCTSSearch::new(engine, config);
+        search.search(&mut state, PlayerId::new(0), 10);
+
+        // Should have no priors (terminal state)
+        let priors = search.root_priors();
+        assert!(priors.is_empty());
+    }
+
+    #[test]
+    fn test_action_visits() {
+        let engine = TestEngine::new(2).terminal_after(10);
+        let mut state = GameState::new(2, 42);
+        let config = MCTSConfig::default();
+
+        let mut search = MCTSSearch::new(engine, config);
+        search.search(&mut state, PlayerId::new(0), 100);
+
+        let visits = search.action_visits();
+
+        // Should have visits for each action
+        assert!(!visits.is_empty());
+
+        // Total visits should be close to iterations
+        let total: u32 = visits.iter().map(|(_, v)| v).sum();
+        assert!(total > 0);
+    }
+
+    #[test]
+    fn test_engine_accessor() {
+        let engine = TestEngine::new(2).terminal_after(10);
+        let config = MCTSConfig::default();
+
+        let search = MCTSSearch::new(engine, config);
+
+        // Verify engine is accessible
+        assert_eq!(search.engine().config().player_count, 2);
+    }
+
+    #[test]
+    fn test_config_accessor() {
+        let engine = TestEngine::new(2).terminal_after(10);
+        let config = MCTSConfig::default()
+            .with_exploration(3.0)
+            .with_seed(999);
+
+        let search = MCTSSearch::new(engine, config);
+
+        assert_eq!(search.config().exploration_constant, 3.0);
+        assert_eq!(search.config().seed, 999);
+    }
+
+    #[test]
+    fn test_action_probabilities_no_visits() {
+        let engine = TestEngine::new(2).terminal_after(10);
+        let mut state = GameState::new(2, 42);
+        let config = MCTSConfig::default();
+
+        let mut search = MCTSSearch::new(engine, config);
+        // Only expand root, don't run full iterations
+        search.search(&mut state, PlayerId::new(0), 1);
+
+        let probs = search.action_probabilities();
+
+        // Should still have probabilities (uniform if no visits)
+        assert!(!probs.is_empty());
+        let sum: f64 = probs.iter().map(|(_, p)| p).sum();
+        assert!((sum - 1.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_search_with_custom_policies() {
+        use crate::mcts::PUCT;
+
+        let engine = TestEngine::new(2).terminal_after(10);
+        let mut state = GameState::new(2, 42);
+        let config = MCTSConfig::default();
+
+        let mut search = MCTSSearch::new(engine, config).with_selection(PUCT);
+        let action = search.search(&mut state, PlayerId::new(0), 50);
+
+        assert!(action.is_some());
+    }
+
+    #[test]
+    fn test_search_four_player() {
+        let engine = TestEngine::new(4).terminal_after(20);
+        let mut state = GameState::new(4, 42);
+        let config = MCTSConfig::default();
+
+        let mut search = MCTSSearch::new(engine, config);
+        let action = search.search(&mut state, PlayerId::new(0), 100);
+
+        assert!(action.is_some());
+    }
+
+    // =========================================================================
+    // Sign/Perspective correctness tests
+    // =========================================================================
+
+    /// Test engine where action 0 = player 0 wins, action 1 = player 1 wins
+    struct AdversarialEngine {
+        config: crate::core::GameConfig,
+    }
+
+    impl AdversarialEngine {
+        fn new() -> Self {
+            Self {
+                config: crate::core::GameConfig::new(2),
+            }
+        }
+    }
+
+    impl Clone for AdversarialEngine {
+        fn clone(&self) -> Self {
+            Self {
+                config: self.config.clone(),
+            }
+        }
+    }
+
+    impl RulesEngine for AdversarialEngine {
+        fn config(&self) -> &crate::core::GameConfig {
+            &self.config
+        }
+
+        fn legal_templates(&self, state: &GameState, _player: PlayerId) -> Vec<TemplateId> {
+            // Only root has choices; after one action it's terminal
+            // turn_number starts at 1
+            if state.public.turn_number == 1 {
+                vec![TemplateId::new(0), TemplateId::new(1)]
+            } else {
+                vec![]
+            }
+        }
+
+        fn legal_pointers(
+            &self,
+            _state: &GameState,
+            _player: PlayerId,
+            _template: TemplateId,
+            _prior: &[crate::core::EntityId],
+        ) -> Vec<crate::core::EntityId> {
+            vec![]
+        }
+
+        fn apply_action(&mut self, state: &mut GameState, _player: PlayerId, action: &Action) {
+            // Store which action was taken in player state
+            state.public.set_player_state(PlayerId::new(0), "chosen", action.template.0 as i64);
+            state.public.turn_number += 1;
+        }
+
+        fn is_terminal(&self, state: &GameState) -> Option<crate::rules::GameResult> {
+            // Turn starts at 1, increments after action
+            if state.public.turn_number > 1 {
+                let chosen = state.public.get_player_state(PlayerId::new(0), "chosen", 0);
+                if chosen == 0 {
+                    // Action 0 = Player 0 wins
+                    Some(crate::rules::GameResult::Winner(PlayerId::new(0)))
+                } else {
+                    // Action 1 = Player 1 wins
+                    Some(crate::rules::GameResult::Winner(PlayerId::new(1)))
+                }
+            } else {
+                None
+            }
+        }
+    }
+
+    #[test]
+    fn test_mcts_finds_winning_move_for_player0() {
+        // Player 0 should choose action 0 (which makes them win)
+        let engine = AdversarialEngine::new();
+        let mut state = GameState::new(2, 42);
+        let config = MCTSConfig::default();
+
+        let mut search = MCTSSearch::new(engine, config);
+        let action = search.search(&mut state, PlayerId::new(0), 100);
+
+        // MCTS should find that action 0 wins for player 0
+        assert_eq!(action, Some(Action::new(TemplateId::new(0))));
+
+        // Verify Q-values: action 0 should have higher value for player 0
+        let root = search.tree().root_node();
+        let edge0 = root.edges.iter().find(|e| e.action.template == TemplateId::new(0)).unwrap();
+        let edge1 = root.edges.iter().find(|e| e.action.template == TemplateId::new(1)).unwrap();
+
+        // Action 0 should have Q=1.0 for player 0 (always wins)
+        // Action 1 should have Q=0.0 for player 0 (always loses)
+        assert!(
+            edge0.mean_reward(PlayerId::new(0)) > edge1.mean_reward(PlayerId::new(0)),
+            "Action 0 Q-value ({}) should be > Action 1 Q-value ({}) for Player 0",
+            edge0.mean_reward(PlayerId::new(0)),
+            edge1.mean_reward(PlayerId::new(0))
+        );
+
+        // Visit counts should strongly favor action 0
+        assert!(
+            edge0.visits > edge1.visits,
+            "Action 0 should have more visits ({}) than Action 1 ({})",
+            edge0.visits,
+            edge1.visits
+        );
+    }
+
+    #[test]
+    fn test_mcts_q_values_correct_per_player() {
+        let engine = AdversarialEngine::new();
+        let mut state = GameState::new(2, 42);
+        let config = MCTSConfig::default();
+
+        let mut search = MCTSSearch::new(engine, config);
+        search.search(&mut state, PlayerId::new(0), 100);
+
+        let root = search.tree().root_node();
+        let edge0 = root.edges.iter().find(|e| e.action.template == TemplateId::new(0)).unwrap();
+        let edge1 = root.edges.iter().find(|e| e.action.template == TemplateId::new(1)).unwrap();
+
+        // For Action 0: Player 0 wins, so Q(p0)=1.0, Q(p1)=0.0
+        assert!(
+            (edge0.mean_reward(PlayerId::new(0)) - 1.0).abs() < 0.01,
+            "Action 0: Player 0 Q-value should be ~1.0, got {}",
+            edge0.mean_reward(PlayerId::new(0))
+        );
+        assert!(
+            edge0.mean_reward(PlayerId::new(1)).abs() < 0.01,
+            "Action 0: Player 1 Q-value should be ~0.0, got {}",
+            edge0.mean_reward(PlayerId::new(1))
+        );
+
+        // For Action 1: Player 1 wins, so Q(p0)=0.0, Q(p1)=1.0
+        assert!(
+            edge1.mean_reward(PlayerId::new(0)).abs() < 0.01,
+            "Action 1: Player 0 Q-value should be ~0.0, got {}",
+            edge1.mean_reward(PlayerId::new(0))
+        );
+        assert!(
+            (edge1.mean_reward(PlayerId::new(1)) - 1.0).abs() < 0.01,
+            "Action 1: Player 1 Q-value should be ~1.0, got {}",
+            edge1.mean_reward(PlayerId::new(1))
+        );
+    }
+
+    /// Two-move game to test alternating perspectives
+    /// Turn 0: Player 0 picks A or B
+    /// Turn 1: Player 1 picks X or Y
+    /// Outcome depends on combination
+    struct TwoMoveGame {
+        config: crate::core::GameConfig,
+    }
+
+    impl TwoMoveGame {
+        fn new() -> Self {
+            Self {
+                config: crate::core::GameConfig::new(2),
+            }
+        }
+    }
+
+    impl Clone for TwoMoveGame {
+        fn clone(&self) -> Self {
+            Self {
+                config: self.config.clone(),
+            }
+        }
+    }
+
+    impl RulesEngine for TwoMoveGame {
+        fn config(&self) -> &crate::core::GameConfig {
+            &self.config
+        }
+
+        fn legal_templates(&self, state: &GameState, _player: PlayerId) -> Vec<TemplateId> {
+            // Turn starts at 1, so turns 1 and 2 have actions
+            if state.public.turn_number <= 2 {
+                vec![TemplateId::new(0), TemplateId::new(1)]
+            } else {
+                vec![]
+            }
+        }
+
+        fn legal_pointers(
+            &self,
+            _state: &GameState,
+            _player: PlayerId,
+            _template: TemplateId,
+            _prior: &[crate::core::EntityId],
+        ) -> Vec<crate::core::EntityId> {
+            vec![]
+        }
+
+        fn apply_action(&mut self, state: &mut GameState, player: PlayerId, action: &Action) {
+            // Store choices
+            let key = if player == PlayerId::new(0) { "p0_choice" } else { "p1_choice" };
+            state.public.set_player_state(PlayerId::new(0), key, action.template.0 as i64);
+            state.public.turn_number += 1;
+            // Alternate players
+            state.public.active_player = PlayerId::new((player.0 + 1) % 2);
+        }
+
+        fn is_terminal(&self, state: &GameState) -> Option<crate::rules::GameResult> {
+            // Turn starts at 1, after 2 actions turn is 3
+            if state.public.turn_number > 2 {
+                let p0_choice = state.public.get_player_state(PlayerId::new(0), "p0_choice", 0);
+                let p1_choice = state.public.get_player_state(PlayerId::new(0), "p1_choice", 0);
+
+                // Payoff matrix (from player 0's perspective):
+                // P0\P1  |  0   |  1
+                // -------|------|------
+                //   0    | Win  | Draw
+                //   1    | Draw | Lose
+                //
+                // P0 should choose 0 (dominates): wins if P1=0, draws if P1=1
+                // P0 choosing 1 is worse: draws if P1=0, loses if P1=1
+
+                let result = match (p0_choice, p1_choice) {
+                    (0, 0) => crate::rules::GameResult::Winner(PlayerId::new(0)),
+                    (0, 1) => crate::rules::GameResult::Draw,
+                    (1, 0) => crate::rules::GameResult::Draw,
+                    (1, 1) => crate::rules::GameResult::Winner(PlayerId::new(1)),
+                    _ => crate::rules::GameResult::Draw,
+                };
+                Some(result)
+            } else {
+                None
+            }
+        }
+    }
+
+    #[test]
+    fn test_mcts_two_move_game_finds_dominant_strategy() {
+        // Player 0 should choose action 0 (dominates action 1)
+        let engine = TwoMoveGame::new();
+        let mut state = GameState::new(2, 42);
+        let config = MCTSConfig::default();
+
+        let mut search = MCTSSearch::new(engine, config);
+        let action = search.search(&mut state, PlayerId::new(0), 200);
+
+        // With uniform opponent policy (50% each):
+        // Action 0 EV = 0.5 * 1.0 + 0.5 * 0.5 = 0.75
+        // Action 1 EV = 0.5 * 0.5 + 0.5 * 0.0 = 0.25
+        // So MCTS should prefer action 0
+        assert_eq!(
+            action,
+            Some(Action::new(TemplateId::new(0))),
+            "Player 0 should choose dominant strategy (action 0)"
+        );
+    }
+
+    #[test]
+    fn test_mcts_backpropagates_correctly_through_opponent_moves() {
+        let engine = TwoMoveGame::new();
+        let mut state = GameState::new(2, 42);
+        let config = MCTSConfig::default();
+
+        let mut search = MCTSSearch::new(engine, config);
+        search.search(&mut state, PlayerId::new(0), 500);
+
+        let root = search.tree().root_node();
+        let edge0 = root.edges.iter().find(|e| e.action.template == TemplateId::new(0)).unwrap();
+        let edge1 = root.edges.iter().find(|e| e.action.template == TemplateId::new(1)).unwrap();
+
+        // Expected values with uniform opponent:
+        // Action 0: EV(p0) = 0.5*1 + 0.5*0.5 = 0.75, EV(p1) = 0.5*0 + 0.5*0.5 = 0.25
+        // Action 1: EV(p0) = 0.5*0.5 + 0.5*0 = 0.25, EV(p1) = 0.5*0.5 + 0.5*1 = 0.75
+
+        let q0_a0 = edge0.mean_reward(PlayerId::new(0));
+        let q0_a1 = edge1.mean_reward(PlayerId::new(0));
+
+        assert!(
+            q0_a0 > q0_a1,
+            "Action 0 should have higher Q for player 0: {} vs {}",
+            q0_a0,
+            q0_a1
+        );
+
+        // Check approximate values (allow some variance from sampling)
+        assert!(
+            (q0_a0 - 0.75).abs() < 0.15,
+            "Action 0 Q(p0) should be ~0.75, got {}",
+            q0_a0
+        );
+        assert!(
+            (q0_a1 - 0.25).abs() < 0.15,
+            "Action 1 Q(p0) should be ~0.25, got {}",
+            q0_a1
+        );
     }
 }

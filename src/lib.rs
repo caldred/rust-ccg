@@ -33,6 +33,8 @@
 //! - `triggers`: Event-driven trigger system
 //! - `stack`: Resolution systems (immediate and priority-based)
 //! - `mcts`: Monte Carlo Tree Search for AI
+//! - `nn`: Neural network traits and state encoding
+//! - `training`: Self-play and training data collection
 
 pub mod core;
 pub mod zones;
@@ -42,6 +44,8 @@ pub mod effects;
 pub mod triggers;
 pub mod stack;
 pub mod mcts;
+pub mod nn;
+pub mod training;
 pub mod games;
 
 // Re-export commonly used types
@@ -82,4 +86,15 @@ pub use crate::mcts::{
     SearchStats, TreeStats,
     SelectionPolicy, SimulationPolicy, OpponentPolicy,
     UCB1, PUCT, RandomSimulation, UniformOpponent,
+};
+
+pub use crate::nn::{
+    EncodedState, PolicyNetwork, ValueNetwork, PolicyValueNetwork,
+    UniformPolicy, ZeroValue, UniformPolicyZeroValue,
+    StateEncoder, SimpleGameEncoder, ZeroEncoder,
+};
+
+pub use crate::training::{
+    Step, Trajectory, TrainingSample, ExperienceBuffer,
+    SelfPlayConfig, SelfPlayWorker,
 };
