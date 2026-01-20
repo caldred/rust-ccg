@@ -39,6 +39,7 @@ pub struct PlayerZones {
 }
 
 /// Simple game state.
+#[derive(Clone)]
 pub struct SimpleGame {
     config: GameConfig,
     registry: CardRegistry,

@@ -32,6 +32,7 @@
 //! - `effects`: Effect system for card abilities
 //! - `triggers`: Event-driven trigger system
 //! - `stack`: Resolution systems (immediate and priority-based)
+//! - `mcts`: Monte Carlo Tree Search for AI
 
 pub mod core;
 pub mod zones;
@@ -40,6 +41,7 @@ pub mod rules;
 pub mod effects;
 pub mod triggers;
 pub mod stack;
+pub mod mcts;
 pub mod games;
 
 // Re-export commonly used types
@@ -73,4 +75,11 @@ pub use crate::stack::{
     ResolutionStatus, ResolutionSystem,
     ImmediateResolution,
     PriorityStack, StackEntry, StackEntryId, StackSource,
+};
+
+pub use crate::mcts::{
+    MCTSConfig, MCTSSearch, MCTSTree, MCTSNode, NodeId, Edge,
+    SearchStats, TreeStats,
+    SelectionPolicy, SimulationPolicy, OpponentPolicy,
+    UCB1, PUCT, RandomSimulation, UniformOpponent,
 };
