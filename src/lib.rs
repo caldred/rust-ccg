@@ -31,6 +31,7 @@
 //! - `rules`: RulesEngine trait for game implementations
 //! - `effects`: Effect system for card abilities
 //! - `triggers`: Event-driven trigger system
+//! - `stack`: Resolution systems (immediate and priority-based)
 
 pub mod core;
 pub mod zones;
@@ -38,6 +39,7 @@ pub mod cards;
 pub mod rules;
 pub mod effects;
 pub mod triggers;
+pub mod stack;
 pub mod games;
 
 // Re-export commonly used types
@@ -59,10 +61,16 @@ pub use crate::cards::{
 
 pub use crate::rules::{RulesEngine, GameResult};
 
-pub use crate::effects::{Effect, EffectBatch, TargetSpec, TargetFilter, TargetSelector, EffectResolver};
+pub use crate::effects::{Effect, EffectBatch, TargetSpec, TargetFilter, TargetSelector, EffectResolver, ResolverContext};
 
 pub use crate::triggers::{
     EventTypeId, GameEvent, EventTypeConfig,
     TriggerCondition, ConditionContext, ConditionEvaluator,
     TriggerId, Trigger, TriggerRegistry, TriggerTiming, TriggeredEffect,
+};
+
+pub use crate::stack::{
+    ResolutionStatus, ResolutionSystem,
+    ImmediateResolution,
+    PriorityStack, StackEntry, StackEntryId, StackSource,
 };

@@ -34,6 +34,18 @@ impl<'a> ResolverContext<'a> {
         }
     }
 
+    /// Create a simple context with sequential zone IDs.
+    ///
+    /// Zone layout: deck zones are 0..player_count, hand zones are player_count..2*player_count.
+    /// Useful for testing.
+    pub fn simple(player_count: usize) -> Self {
+        Self {
+            get_deck_zone: Box::new(move |p| ZoneId::new(p.0 as u16)),
+            get_hand_zone: Box::new(move |p| ZoneId::new((player_count as u16) + p.0 as u16)),
+            eval_condition: Box::new(|_, _| false),
+        }
+    }
+
     /// Add a condition evaluator.
     pub fn with_condition_eval(
         mut self,

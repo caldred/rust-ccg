@@ -216,13 +216,13 @@ impl Effect {
 /// A batch of targeted effects to resolve.
 ///
 /// Pairs effects with their targets for resolution.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct EffectBatch {
     entries: Vec<EffectEntry>,
 }
 
 /// A single entry in an effect batch.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct EffectEntry {
     /// The effect to apply.
     pub effect: Effect,
